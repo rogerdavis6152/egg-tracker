@@ -570,6 +570,12 @@ export default function Home() {
             Start New Collection
           </button>
 
+          <div className="mt-3 text-center">
+            <a href="/reports" className="text-sm font-semibold text-gray-700 underline">
+              Reports
+            </a>
+          </div>
+
           <section className="mt-8 rounded-2xl bg-white p-4 shadow-sm sm:p-5">
             <h2 className="text-lg font-bold">Recent Egg Collections</h2>
             <p className="mt-1 text-sm text-gray-500">
