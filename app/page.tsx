@@ -23,6 +23,19 @@ type FlockData = {
   notes: string;
 };
 
+type RecentCollectionRound = {
+  created_at: string;
+  flock_collections: {
+    flock_id: string;
+    eggs: { id: string }[];
+  }[];
+};
+
+type RecentCollectionDay = {
+  date: string;
+  eggCounts: Record<string, number>;
+};
+
 const colors = [
   "Brown",
   "Dark Brown",
@@ -74,15 +87,31 @@ function formatDozens(count: number) {
   return `${dozens} sellable dozen + ${eggs} eggs`;
 }
 
+function getLocalDateValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 export default function Home() {
   const supabase = createClient();
   const weightInputRef = useRef<HTMLInputElement>(null);
 
   const [flocks, setFlocks] = useState<Flock[]>([]);
+  const [recentCollectionDays, setRecentCollectionDays] = useState<
+    RecentCollectionDay[]
+  >([]);
+  const [recentCollectionsError, setRecentCollectionsError] = useState("");
   const [selectedFlockId, setSelectedFlockId] = useState("");
   const [flockData, setFlockData] = useState<Record<string, FlockData>>({});
 
   const [collectionRoundId, setCollectionRoundId] = useState("");
+  const [collectionDate, setCollectionDate] = useState("");
+  const [collectionTimestamp, setCollectionTimestamp] = useState("");
+  const [collectionDateSaving, setCollectionDateSaving] = useState(false);
+  const [collectionDateError, setCollectionDateError] = useState("");
   const [collectionStarted, setCollectionStarted] = useState(false);
 
   const [weight, setWeight] = useState("");
@@ -121,11 +150,54 @@ export default function Home() {
     setFlocks(data ?? []);
     setFlockData(initialData);
 
+    await loadRecentCollections();
+
     if (data && data.length > 0) {
       setSelectedFlockId(data[0].id);
     }
 
     setLoading(false);
+  }
+
+  async function loadRecentCollections() {
+    const { data: rounds, error: roundsError } = await supabase
+      .from("collection_rounds")
+      .select("created_at, flock_collections(flock_id, eggs(id))")
+      .order("created_at", { ascending: false })
+      .limit(1000);
+
+    if (roundsError) {
+      setRecentCollectionsError(roundsError.message);
+    } else {
+      const daysByDate = new Map<string, RecentCollectionDay>();
+
+      for (const round of (rounds ?? []) as RecentCollectionRound[]) {
+        const collectedAt = new Date(round.created_at);
+        const date = [
+          collectedAt.getFullYear(),
+          String(collectedAt.getMonth() + 1).padStart(2, "0"),
+          String(collectedAt.getDate()).padStart(2, "0"),
+        ].join("-");
+
+        let day = daysByDate.get(date);
+        if (!day) {
+          day = { date, eggCounts: {} };
+          daysByDate.set(date, day);
+        }
+
+        for (const flockCollection of round.flock_collections ?? []) {
+          day.eggCounts[flockCollection.flock_id] =
+            (day.eggCounts[flockCollection.flock_id] ?? 0) +
+            (flockCollection.eggs?.length ?? 0);
+        }
+      }
+
+      setRecentCollectionDays(
+        [...daysByDate.values()]
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, 5)
+      );
+    }
   }
 
   const selectedFlock = flocks.find(
@@ -159,7 +231,7 @@ export default function Home() {
       .insert({
         entered_by: user.id,
       })
-      .select("id")
+      .select("id, created_at")
       .single();
 
     if (error) {
@@ -199,12 +271,46 @@ export default function Home() {
     }
 
     setCollectionRoundId(data.id);
+    setCollectionTimestamp(data.created_at);
+    setCollectionDate(getLocalDateValue(new Date(data.created_at)));
+    setCollectionDateError("");
     setCollectionStarted(true);
     setCollectionFinished(false);
     setFlockData(initialData);
     setSelectedFlockId(firstFlockId);
 
     focusWeight();
+  }
+
+  async function updateCollectionDate(date: string) {
+    if (!collectionRoundId || !date || !collectionTimestamp) return;
+
+    const [year, month, day] = date.split("-").map(Number);
+    const updatedTimestamp = new Date(collectionTimestamp);
+    updatedTimestamp.setFullYear(year, month - 1, day);
+
+    setCollectionDateSaving(true);
+    setCollectionDateError("");
+
+    const { data, error } = await supabase
+      .from("collection_rounds")
+      .update({ created_at: updatedTimestamp.toISOString() })
+      .eq("id", collectionRoundId)
+      .select("id")
+      .maybeSingle();
+
+    if (error || !data) {
+      setCollectionDateError(
+        `Could not update date: ${error?.message ?? "Collection round not found."}`
+      );
+      setCollectionDateSaving(false);
+      return;
+    }
+
+    setCollectionDate(date);
+    setCollectionTimestamp(updatedTimestamp.toISOString());
+    setCollectionDateSaving(false);
+    await loadRecentCollections();
   }
 
   async function selectFlock(flockId: string) {
@@ -399,6 +505,8 @@ export default function Home() {
 
   function startNewCollection() {
     setCollectionRoundId("");
+    setCollectionDate("");
+    setCollectionTimestamp("");
     setCollectionStarted(false);
     setCollectionFinished(false);
     setShowFinishConfirmation(false);
@@ -461,6 +569,103 @@ export default function Home() {
           >
             Start New Collection
           </button>
+
+          <section className="mt-8 rounded-2xl bg-white p-4 shadow-sm sm:p-5">
+            <h2 className="text-lg font-bold">Recent Egg Collections</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Eggs collected by flock for the five most recent collection days.
+            </p>
+
+            {recentCollectionsError ? (
+              <p className="mt-4 text-sm text-red-600">
+                Could not load recent collections: {recentCollectionsError}
+              </p>
+            ) : recentCollectionDays.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-500">
+                No collection history yet.
+              </p>
+            ) : (
+              <>
+                <div className="mt-4 space-y-3 sm:hidden">
+                  {recentCollectionDays.map((day) => {
+                    const [year, month, date] = day.date.split("-").map(Number);
+                    const label = new Date(
+                      year,
+                      month - 1,
+                      date
+                    ).toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                    });
+
+                    return (
+                      <section key={day.date} className="rounded-xl bg-gray-50 p-3">
+                        <h3 className="mb-2 text-sm font-bold">{label}</h3>
+                        <dl className="grid grid-cols-3 gap-2">
+                          {flocks.map((flock) => (
+                            <div
+                              key={flock.id}
+                              className="flex min-w-0 items-center justify-between gap-2 rounded-lg bg-white px-2 py-2"
+                            >
+                              <dt className="min-w-0 text-xs leading-tight text-gray-600">
+                                {flock.name}
+                              </dt>
+                              <dd className="shrink-0 text-sm font-bold tabular-nums">
+                                {day.eggCounts[flock.id] ?? 0}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </section>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 hidden overflow-x-auto sm:block">
+                <table className="w-full min-w-max border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 text-gray-600">
+                      <th scope="col" className="px-3 py-2 font-semibold">Day</th>
+                      {flocks.map((flock) => (
+                        <th key={flock.id} scope="col" className="px-3 py-2 font-semibold">
+                          {flock.name}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentCollectionDays.map((day) => {
+                      const [year, month, date] = day.date.split("-").map(Number);
+                      const label = new Date(
+                        year,
+                        month - 1,
+                        date
+                      ).toLocaleDateString(undefined, {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                      });
+
+                      return (
+                        <tr key={day.date} className="border-b border-gray-100 last:border-0">
+                          <th scope="row" className="whitespace-nowrap px-3 py-3 font-semibold">
+                            {label}
+                          </th>
+                          {flocks.map((flock) => (
+                            <td key={flock.id} className="px-3 py-3 text-center tabular-nums">
+                              {day.eggCounts[flock.id] ?? 0}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                </div>
+              </>
+            )}
+          </section>
 
           {message && (
             <p className="mt-4 text-red-600">{message}</p>
@@ -566,9 +771,23 @@ export default function Home() {
               Egg Collection
             </h1>
 
-            <p className="mt-1 text-sm text-gray-500">
-              Collection round
-            </p>
+            <label className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+              <span>Collection date</span>
+              <input
+                type="date"
+                aria-label="Collection date"
+                value={collectionDate}
+                onChange={(event) => updateCollectionDate(event.target.value)}
+                disabled={collectionDateSaving}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm font-medium text-gray-900 disabled:opacity-60"
+              />
+            </label>
+            {collectionDateSaving && (
+              <p className="mt-1 text-xs text-gray-500">Saving date...</p>
+            )}
+            {collectionDateError && (
+              <p className="mt-1 text-xs text-red-600">{collectionDateError}</p>
+            )}
           </div>
 
           <button
