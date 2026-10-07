@@ -195,6 +195,7 @@ export default function Home() {
 
       setRecentCollectionDays(
         [...daysByDate.values()]
+          .filter((day) => Object.values(day.eggCounts).some((count) => count > 0))
           .sort((a, b) => b.date.localeCompare(a.date))
           .slice(0, 5)
       );
