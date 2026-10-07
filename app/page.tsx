@@ -48,6 +48,13 @@ const colors = [
   "Other",
 ];
 
+function defaultColorsForFlock(flockName: string) {
+  const name = flockName.toLowerCase();
+  if (name.includes("cinnamon")) return ["Brown"];
+  if (name.includes("leghorn")) return ["White", "Cream", "Blue"];
+  return colors;
+}
+
 function createEmptyFlockData(flockName?: string): FlockData {
   let defaultColor = "Dark Brown";
 
@@ -101,6 +108,13 @@ export default function Home() {
   const weightInputRef = useRef<HTMLInputElement>(null);
 
   const [flocks, setFlocks] = useState<Flock[]>([]);
+  const [flockColors, setFlockColors] = useState<Record<string, string[]>>({});
+  const [colorSettingsError, setColorSettingsError] = useState("");
+  const [settingsFlockId, setSettingsFlockId] = useState("");
+  const [colorDraft, setColorDraft] = useState<string[]>([]);
+  const [newColor, setNewColor] = useState("");
+  const [colorSettingsMessage, setColorSettingsMessage] = useState("");
+  const [savingColors, setSavingColors] = useState(false);
   const [recentCollectionDays, setRecentCollectionDays] = useState<
     RecentCollectionDay[]
   >([]);
@@ -119,6 +133,7 @@ export default function Home() {
   const [broken, setBroken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const [message, setMessage] = useState("");
 
   const [showFinishConfirmation, setShowFinishConfirmation] =
@@ -142,10 +157,40 @@ export default function Home() {
       return;
     }
 
+    const { data: savedColors, error: colorsError } = await supabase
+      .from("flock_egg_colors")
+      .select("flock_id, color");
+
+    const colorsByFlock: Record<string, string[]> = {};
+    if (colorsError) {
+      setColorSettingsError(
+        `Flock color settings could not load. Run the provided SQL setup script first. (${colorsError.message})`
+      );
+    } else {
+      for (const row of savedColors ?? []) {
+        colorsByFlock[row.flock_id] ??= [];
+        colorsByFlock[row.flock_id].push(row.color);
+      }
+    }
+
+    for (const flock of data ?? []) {
+      if (!colorsByFlock[flock.id]?.length) {
+        colorsByFlock[flock.id] = defaultColorsForFlock(flock.name);
+      }
+    }
+    setFlockColors(colorsByFlock);
+    if (data?.length) {
+      setSettingsFlockId(data[0].id);
+      setColorDraft(colorsByFlock[data[0].id] ?? []);
+    }
+
     const initialData: Record<string, FlockData> = {};
 
     for (const flock of data ?? []) {
-      initialData[flock.id] = createEmptyFlockData();
+      initialData[flock.id] = {
+        ...createEmptyFlockData(flock.name),
+        lastColor: colorsByFlock[flock.id]?.[0] ?? "Brown",
+      };
     }
 
     setFlocks(data ?? []);
@@ -202,6 +247,65 @@ export default function Home() {
     }
   }
 
+  function getColorsForFlock(flockId: string) {
+    const configured = flockColors[flockId];
+    if (configured?.length) return configured;
+    const flock = flocks.find((item) => item.id === flockId);
+    return flock ? defaultColorsForFlock(flock.name) : colors;
+  }
+
+  async function saveFlockColors() {
+    if (!settingsFlockId || colorDraft.length === 0 || savingColors) return;
+
+    setSavingColors(true);
+    setColorSettingsMessage("");
+
+    const existingColors = getColorsForFlock(settingsFlockId);
+    const { error: upsertError } = await supabase
+      .from("flock_egg_colors")
+      .upsert(
+        colorDraft.map((color) => ({ flock_id: settingsFlockId, color })),
+        { onConflict: "flock_id,color" }
+      );
+
+    if (upsertError) {
+      setColorSettingsMessage(`Could not save colors: ${upsertError.message}`);
+      setSavingColors(false);
+      return;
+    }
+
+    const removedColors = existingColors.filter(
+      (color) => !colorDraft.includes(color)
+    );
+    if (removedColors.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("flock_egg_colors")
+        .delete()
+        .eq("flock_id", settingsFlockId)
+        .in("color", removedColors);
+
+      if (deleteError) {
+        setColorSettingsMessage(
+          `Colors were partly saved. Could not remove old choices: ${deleteError.message}`
+        );
+        setSavingColors(false);
+        return;
+      }
+    }
+
+    setFlockColors((current) => ({ ...current, [settingsFlockId]: [...colorDraft] }));
+    setFlockData((current) => {
+      const flockDataForSettings = current[settingsFlockId];
+      if (!flockDataForSettings || colorDraft.includes(flockDataForSettings.lastColor)) return current;
+      return {
+        ...current,
+        [settingsFlockId]: { ...flockDataForSettings, lastColor: colorDraft[0] },
+      };
+    });
+    setColorSettingsMessage("Flock colors saved.");
+    setSavingColors(false);
+  }
+
   const selectedFlock = flocks.find(
     (flock) => flock.id === selectedFlockId
   );
@@ -244,7 +348,10 @@ export default function Home() {
     const initialData: Record<string, FlockData> = {};
 
     for (const flock of flocks) {
-      initialData[flock.id] = createEmptyFlockData(flock.name);
+      initialData[flock.id] = {
+        ...createEmptyFlockData(flock.name),
+        lastColor: getColorsForFlock(flock.id)[0],
+      };
     }
 
     let firstFlockId = "";
@@ -321,6 +428,14 @@ export default function Home() {
     setMessage("");
 
     let flockCollectionId = flockData[flockId]?.flockCollectionId;
+    const allowedColors = getColorsForFlock(flockId);
+    const existingFlockData = flockData[flockId] ?? createEmptyFlockData();
+    if (!allowedColors.includes(existingFlockData.lastColor)) {
+      setFlockData((current) => ({
+        ...current,
+        [flockId]: { ...existingFlockData, lastColor: allowedColors[0] },
+      }));
+    }
 
     if (collectionRoundId && !flockCollectionId) {
       const { data, error } = await supabase
@@ -505,6 +620,83 @@ export default function Home() {
     setCollectionFinished(true);
   }
 
+  async function cancelEmptyCollection() {
+    if (!collectionRoundId || allEggs.length > 0 || canceling) return;
+
+    setCanceling(true);
+    setMessage("");
+
+    const { data: flockCollections, error: flockCollectionsError } =
+      await supabase
+        .from("flock_collections")
+        .select("id")
+        .eq("collection_round_id", collectionRoundId);
+
+    if (flockCollectionsError) {
+      setMessage(`Could not cancel collection: ${flockCollectionsError.message}`);
+      setCanceling(false);
+      return;
+    }
+
+    const flockCollectionIds = (flockCollections ?? []).map((row) => row.id);
+
+    if (flockCollectionIds.length > 0) {
+      const { data: eggs, error: eggsError } = await supabase
+        .from("eggs")
+        .select("id")
+        .in("flock_collection_id", flockCollectionIds);
+
+      if (eggsError) {
+        setMessage(`Could not cancel collection: ${eggsError.message}`);
+        setCanceling(false);
+        return;
+      }
+
+      if ((eggs ?? []).length > 0) {
+        setMessage("This collection has eggs. Use Finish Collection to leave.");
+        setCanceling(false);
+        return;
+      }
+
+      const { data: deletedFlockCollections, error: deleteFlockCollectionsError } = await supabase
+        .from("flock_collections")
+        .delete()
+        .in("id", flockCollectionIds)
+        .select("id");
+
+      if (
+        deleteFlockCollectionsError ||
+        (deletedFlockCollections ?? []).length !== flockCollectionIds.length
+      ) {
+        setMessage(
+          `Could not cancel collection: ${deleteFlockCollectionsError?.message ?? "Could not remove its empty flock records."}`
+        );
+        setCanceling(false);
+        return;
+      }
+    }
+
+    const { data: deletedRound, error: deleteRoundError } = await supabase
+      .from("collection_rounds")
+      .delete()
+      .eq("id", collectionRoundId)
+      .select("id")
+      .maybeSingle();
+
+    if (deleteRoundError || !deletedRound) {
+      setMessage(
+        `Could not cancel collection: ${deleteRoundError?.message ?? "Collection round not found."}`
+      );
+      setCanceling(false);
+      return;
+    }
+
+    setCanceling(false);
+    startNewCollection();
+    setCollectionDateError("");
+    setMessage("");
+  }
+
   function startNewCollection() {
     setCollectionRoundId("");
     setCollectionDate("");
@@ -571,6 +763,125 @@ export default function Home() {
           >
             Start New Collection
           </button>
+
+          <details className="mt-4 rounded-2xl bg-white p-4 shadow-sm sm:p-5">
+            <summary className="cursor-pointer text-lg font-bold">
+              Flock color settings
+            </summary>
+            <p className="mt-2 text-sm text-gray-600">
+              Choose which egg colors appear during collection for each flock.
+            </p>
+
+            {colorSettingsError && (
+              <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                {colorSettingsError}
+              </p>
+            )}
+
+            {flocks.length > 0 && (
+              <div className="mt-4">
+                <label htmlFor="color-settings-flock" className="mb-1 block text-sm font-semibold">
+                  Flock
+                </label>
+                <select
+                  id="color-settings-flock"
+                  value={settingsFlockId}
+                  onChange={(event) => {
+                    const flockId = event.target.value;
+                    setSettingsFlockId(flockId);
+                    setColorDraft(getColorsForFlock(flockId));
+                    setNewColor("");
+                    setColorSettingsMessage("");
+                  }}
+                  className="w-full rounded-lg border border-gray-300 bg-white p-2 text-gray-900"
+                >
+                  {flocks.map((flock) => (
+                    <option key={flock.id} value={flock.id}>{flock.name}</option>
+                  ))}
+                </select>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[...colors, ...colorDraft.filter((color) => !colors.includes(color))].map((color) => {
+                    const checked = colorDraft.includes(color);
+                    return (
+                      <label key={color} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-900">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            setColorDraft((current) => checked
+                              ? current.filter((item) => item !== color)
+                              : [...current, color]);
+                            setColorSettingsMessage("");
+                          }}
+                          className="h-4 w-4 accent-black"
+                        />
+                        {color}
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <label htmlFor="new-flock-color" className="mb-1 mt-4 block text-sm font-semibold">
+                  Add another color
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    id="new-flock-color"
+                    value={newColor}
+                    onChange={(event) => setNewColor(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        const value = newColor.trim();
+                        if (value && !colorDraft.some((color) => color.toLowerCase() === value.toLowerCase())) {
+                          setColorDraft((current) => [...current, value]);
+                          setColorSettingsMessage("");
+                        }
+                        setNewColor("");
+                      }
+                    }}
+                    maxLength={40}
+                    placeholder="For example, olive"
+                    className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const value = newColor.trim();
+                      if (value && !colorDraft.some((color) => color.toLowerCase() === value.toLowerCase())) {
+                        setColorDraft((current) => [...current, value]);
+                        setColorSettingsMessage("");
+                      }
+                      setNewColor("");
+                    }}
+                    className="rounded-lg border border-gray-400 bg-white px-3 py-2 text-sm font-semibold"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {colorDraft.length === 0 && (
+                  <p className="mt-2 text-sm text-red-700">
+                    Select at least one color for this flock.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={saveFlockColors}
+                  disabled={savingColors || colorDraft.length === 0 || Boolean(colorSettingsError)}
+                  className="mt-3 w-full rounded-xl bg-gray-800 p-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingColors ? "Saving colors…" : "Save Flock Colors"}
+                </button>
+                {colorSettingsMessage && (
+                  <p className="mt-2 text-sm text-gray-700" role="status">
+                    {colorSettingsMessage}
+                  </p>
+                )}
+              </div>
+            )}
+          </details>
 
           <div className="mt-3 text-center">
             <Link href="/reports" className="text-sm font-semibold text-gray-700 underline">
@@ -851,7 +1162,7 @@ export default function Home() {
                 </div>
 
                 <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-4 sm:gap-2">
-                  {colors.map((color) => (
+                  {getColorsForFlock(selectedFlockId).map((color) => (
                     <button
                       key={color}
                       onClick={() => {
@@ -875,41 +1186,42 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-3 sm:mt-5">
-                <label className="mb-2 block text-sm font-bold">
-                  Weight (grams)
-                </label>
-
-                <input
-                  ref={weightInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  min="0"
-                  step="1"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      saveEgg();
-                    }
-                  }}
-                  className="w-full rounded-xl border-2 border-gray-300 p-3 text-2xl sm:p-4"
-                  placeholder="0"
-                />
-              </div>
-
-              <button
-                onClick={() => setBroken((value) => !value)}
-                className={`mt-3 w-full rounded-xl border-2 p-3 font-bold sm:mt-4 sm:p-4 ${broken
+              <div className="mt-3 flex items-end gap-2 sm:mt-5 sm:gap-3">
+                <div className="min-w-0 flex-1">
+                  <label className="mb-2 block text-sm font-bold">
+                    Weight (grams)
+                  </label>
+                  <input
+                    ref={weightInputRef}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    min="0"
+                    step="1"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        saveEgg();
+                      }
+                    }}
+                    className="w-full rounded-xl border-2 border-gray-300 bg-white p-2 text-2xl text-gray-900 sm:p-4"
+                    placeholder="0"
+                  />
+                </div>
+                <label className={`mb-0 flex min-h-12 shrink-0 cursor-pointer items-center gap-2 rounded-xl border-2 px-2 text-sm font-bold sm:px-3 ${broken
                   ? "border-red-500 bg-red-100 text-red-700"
-                  : "border-gray-300 bg-white"
-                  }`}
-              >
-                {broken
-                  ? "Broken Egg — Tap to Undo"
-                  : "Mark Egg as Broken"}
-              </button>
+                  : "border-gray-300 bg-white text-gray-900"
+                  }`}>
+                  <input
+                    type="checkbox"
+                    checked={broken}
+                    onChange={(event) => setBroken(event.target.checked)}
+                    className="h-5 w-5 accent-black"
+                  />
+                  <span>Broken egg</span>
+                </label>
+              </div>
 
               <button
                 onClick={saveEgg}
@@ -994,13 +1306,22 @@ export default function Home() {
           </div>
         </details>
 
-        <button
-          onClick={() => setShowFinishConfirmation(true)}
-          disabled={allEggs.length === 0}
-          className="mt-3 w-full rounded-2xl bg-gray-800 p-3 text-lg font-bold text-white disabled:cursor-not-allowed disabled:opacity-40 sm:mt-5 sm:p-4"
-        >
-          Finish Collection
-        </button>
+        {allEggs.length === 0 ? (
+          <button
+            onClick={cancelEmptyCollection}
+            disabled={canceling || saving || collectionDateSaving}
+            className="mt-3 w-full rounded-2xl border border-gray-400 bg-white p-3 text-lg font-bold text-gray-800 disabled:cursor-not-allowed disabled:opacity-60 sm:mt-5 sm:p-4"
+          >
+            {canceling ? "Cancelling…" : "Cancel Collection"}
+          </button>
+        ) : (
+          <button
+            onClick={() => setShowFinishConfirmation(true)}
+            className="mt-3 w-full rounded-2xl bg-gray-800 p-3 text-lg font-bold text-white sm:mt-5 sm:p-4"
+          >
+            Finish Collection
+          </button>
+        )}
 
         {message && (
           <p className="mt-4 text-center text-red-600">{message}</p>
