@@ -861,6 +861,7 @@ export default function Home() {
                             lastColor: color,
                           },
                         }));
+                        weightInputRef.current?.focus({ preventScroll: true });
                       }}
                       className={`min-h-10 rounded-lg border p-1.5 text-xs font-semibold sm:rounded-xl sm:border-2 sm:p-3 sm:text-sm ${currentFlock.lastColor === color
                         ? "border-black bg-gray-200"
