@@ -76,7 +76,7 @@ function getEggCategory(weight: number | null) {
 }
 
 function isSellable(egg: Egg) {
-  return !egg.broken && egg.weight !== null && egg.weight >= 43;
+  return !egg.broken && egg.weight !== null && egg.weight >= 50;
 }
 
 function formatDozens(count: number) {
@@ -210,9 +210,9 @@ export default function Home() {
     : createEmptyFlockData();
 
   function focusWeight() {
-    setTimeout(() => {
-      weightInputRef.current?.focus();
-    }, 0);
+    requestAnimationFrame(() => {
+      weightInputRef.current?.focus({ preventScroll: true });
+    });
   }
 
   async function startCollection() {
@@ -911,6 +911,11 @@ export default function Home() {
 
               <button
                 onClick={saveEgg}
+                onPointerDown={(event) => {
+                  if (document.activeElement === weightInputRef.current) {
+                    event.preventDefault();
+                  }
+                }}
                 disabled={saving}
                 className="mt-3 w-full rounded-xl bg-black p-3 text-lg font-bold text-white disabled:opacity-50 sm:mt-4 sm:p-4"
               >

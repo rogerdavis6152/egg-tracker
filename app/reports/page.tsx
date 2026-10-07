@@ -31,6 +31,7 @@ type PendingEggDelete = { dayDate: string; egg: Egg };
 type EggStats = {
   eggs: number;
   broken: number;
+  sellable: number;
   weightTotal: number;
   weighed: number;
 };
@@ -52,13 +53,14 @@ function dateBounds(year: number, month?: number) {
 }
 
 function emptyStats(): EggStats {
-  return { eggs: 0, broken: 0, weightTotal: 0, weighed: 0 };
+  return { eggs: 0, broken: 0, sellable: 0, weightTotal: 0, weighed: 0 };
 }
 
 function statsForEggs(eggs: Egg[]): EggStats {
   return eggs.reduce((stats, egg) => {
     stats.eggs += 1;
     if (egg.broken) stats.broken += 1;
+    if (!egg.broken && egg.weight_grams !== null && egg.weight_grams >= 50) stats.sellable += 1;
     if (egg.weight_grams !== null) {
       stats.weightTotal += egg.weight_grams;
       stats.weighed += 1;
@@ -88,6 +90,14 @@ function formatDate(date: string, includeYear = false) {
 
 function formatAverage(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function formatSellableDozens(count: number) {
+  const dozens = Math.floor(count / 12);
+  const remainder = count % 12;
+  if (dozens === 0) return `${count} eggs`;
+  if (remainder === 0) return `${dozens} dozen`;
+  return `${dozens} dozen + ${remainder} eggs`;
 }
 
 function eggsForDay(day: DayReport, flockId?: string) {
@@ -493,6 +503,13 @@ export default function ReportsPage() {
                   </div>
                 ))}
               </div>
+              {view === "year" && (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <div className="text-xs text-gray-700">Sellable eggs for {selectedYear}</div>
+                  <div className="mt-1 text-xl font-bold tabular-nums text-gray-900">{formatSellableDozens(monthStats.sellable)}</div>
+                  <div className="mt-1 text-xs text-gray-700">Unbroken eggs weighing 50 g or more</div>
+                </div>
+              )}
               <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {flocks.map((flock) => {
                   const stats = statsForDays(days, flock.id);
@@ -596,6 +613,9 @@ export default function ReportsPage() {
                       </div>
                       <p className="mt-1 text-xs text-gray-600">
                         {month.days} collection days · {month.days ? `${formatAverage(month.stats.eggs / month.days)} eggs per collection day` : "no collections"}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-600">
+                        Sellable: <strong className="text-gray-900">{formatSellableDozens(month.stats.sellable)}</strong>
                       </p>
                       <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm text-gray-600 sm:grid-cols-3">
                         {flocks.map((flock) => (
