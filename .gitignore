@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# locally generated data review sheets
+/local-review-data/
+
 # vercel
 .vercel
 
