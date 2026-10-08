@@ -130,6 +130,7 @@ export default function Home() {
   const [collectionStarted, setCollectionStarted] = useState(false);
 
   const [weight, setWeight] = useState("");
+  const [weightNeedsConfirmation, setWeightNeedsConfirmation] = useState(false);
   const [broken, setBroken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -424,6 +425,7 @@ export default function Home() {
 
   async function selectFlock(flockId: string) {
     setWeight("");
+    setWeightNeedsConfirmation(false);
     setBroken(false);
     setMessage("");
 
@@ -467,7 +469,7 @@ export default function Home() {
 
     focusWeight();
   }
-  async function saveEgg() {
+  async function saveEgg(confirmOutlierWeight = false) {
     const selectedFlockData = selectedFlockId
       ? flockData[selectedFlockId]
       : null;
@@ -488,6 +490,16 @@ export default function Home() {
       (!Number.isInteger(parsedWeight) || parsedWeight < 0)
     ) {
       setMessage("Weight must be a whole number.");
+      return;
+    }
+
+    if (
+      parsedWeight !== null &&
+      (parsedWeight < 10 || parsedWeight > 120) &&
+      !confirmOutlierWeight
+    ) {
+      setWeightNeedsConfirmation(true);
+      setMessage("");
       return;
     }
 
@@ -538,6 +550,7 @@ export default function Home() {
     }));
 
     setWeight("");
+    setWeightNeedsConfirmation(false);
     setBroken(false);
     setSaving(false);
 
@@ -705,6 +718,7 @@ export default function Home() {
     setCollectionFinished(false);
     setShowFinishConfirmation(false);
     setWeight("");
+    setWeightNeedsConfirmation(false);
     setBroken(false);
 
     const initialData: Record<string, FlockData> = {};
@@ -1199,10 +1213,13 @@ export default function Home() {
                     min="0"
                     step="1"
                     value={weight}
-                    onChange={(e) => setWeight(e.target.value)}
+                    onChange={(e) => {
+                      setWeight(e.target.value);
+                      setWeightNeedsConfirmation(false);
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
-                        saveEgg();
+                        saveEgg(weightNeedsConfirmation);
                       }
                     }}
                     className="w-full rounded-xl border-2 border-gray-300 bg-white p-2 text-2xl text-gray-900 sm:p-4"
@@ -1224,7 +1241,7 @@ export default function Home() {
               </div>
 
               <button
-                onClick={saveEgg}
+                onClick={() => saveEgg(weightNeedsConfirmation)}
                 onPointerDown={(event) => {
                   if (document.activeElement === weightInputRef.current) {
                     event.preventDefault();
@@ -1233,8 +1250,18 @@ export default function Home() {
                 disabled={saving}
                 className="mt-3 w-full rounded-xl bg-black p-3 text-lg font-bold text-white disabled:opacity-50 sm:mt-4 sm:p-4"
               >
-                {saving ? "Saving..." : "Save Egg & Next"}
+                {saving
+                  ? "Saving..."
+                  : weightNeedsConfirmation
+                    ? "Confirm Weight & Save / Next"
+                    : "Save Egg & Next"}
               </button>
+
+              {weightNeedsConfirmation && (
+                <p className="mt-2 text-center text-sm font-semibold text-amber-800" role="alert">
+                  Verify that {weight} g is correct, then tap the button again to save.
+                </p>
+              )}
 
               {weight && (
                 <div className="mt-3 text-center font-semibold">
