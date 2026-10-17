@@ -629,6 +629,7 @@ export default function Home() {
       return;
     }
 
+    await loadRecentCollections();
     setShowFinishConfirmation(false);
     setCollectionFinished(true);
   }
@@ -1085,10 +1086,13 @@ export default function Home() {
           </div>
 
           <button
-            onClick={startNewCollection}
+            onClick={() => {
+              startNewCollection();
+              void loadRecentCollections();
+            }}
             className="mt-6 w-full rounded-2xl bg-black p-4 text-lg font-bold text-white"
           >
-            + New Collection
+            Home
           </button>
         </div>
       </main>
