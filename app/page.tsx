@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
@@ -398,6 +399,12 @@ export default function Home() {
       return;
     }
 
+    const { data: scaleAccess, error: scaleAccessError } = await supabase
+      .from("scale_reading_access")
+      .select("owner_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from("collection_rounds")
       .insert({
@@ -447,10 +454,14 @@ export default function Home() {
 
     setCollectionRoundId(data.id);
     setCollectionTimestamp(data.created_at);
-    setScaleOwnerId(user.id);
+    setScaleOwnerId(scaleAccess?.owner_id ?? "");
     setScaleListeningSince(data.created_at);
     lastScaleEventRef.current = "";
-    setScaleStatus("Waiting for a reading from the scale…");
+    setScaleStatus(
+      scaleAccessError || !scaleAccess
+        ? "Scale access isn't set up for this account. Manual entry is available."
+        : "Waiting for a reading from the scale…"
+    );
     setCollectionDate(getLocalDateValue(new Date(data.created_at)));
     setCollectionDateError("");
     setCollectionStarted(true);
@@ -825,14 +836,21 @@ export default function Home() {
       <main className="min-h-screen bg-gray-100 p-4">
         <div className="mx-auto max-w-xl">
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">
-                Egg Collection
-              </h1>
-
-              <p className="mt-2 text-gray-600">
-                Start a new collection round when you begin collecting eggs.
-              </p>
+            <div className="flex min-w-0 items-center gap-3">
+              <Image
+                src="/legacy-ridge-logo.webp"
+                alt="Legacy Ridge farm logo"
+                width={1448}
+                height={1108}
+                priority
+                className="h-auto w-20 shrink-0 rounded-lg sm:w-24"
+              />
+              <div>
+                <h1 className="text-2xl font-bold sm:text-3xl">Egg Collection</h1>
+                <p className="mt-1 text-sm text-gray-600 sm:mt-2 sm:text-base">
+                  Start a new collection round when you begin collecting eggs.
+                </p>
+              </div>
             </div>
 
             <button
@@ -1178,28 +1196,36 @@ export default function Home() {
     <main className="min-h-screen bg-gray-100 p-3 pb-6 sm:p-4 sm:pb-8">
       <div className="mx-auto max-w-xl">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold sm:text-3xl">
-              Egg Collection
-            </h1>
+          <div className="flex min-w-0 items-start gap-2 sm:gap-3">
+            <Image
+              src="/legacy-ridge-logo.webp"
+              alt="Legacy Ridge farm logo"
+              width={1448}
+              height={1108}
+              priority
+              className="h-auto w-16 shrink-0 rounded-lg sm:w-20"
+            />
+            <div>
+              <h1 className="text-2xl font-bold sm:text-3xl">Egg Collection</h1>
 
-            <label className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
-              <span>Collection date</span>
-              <input
-                type="date"
-                aria-label="Collection date"
-                value={collectionDate}
-                onChange={(event) => updateCollectionDate(event.target.value)}
-                disabled={collectionDateSaving}
-                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm font-medium text-gray-900 disabled:opacity-60"
-              />
-            </label>
-            {collectionDateSaving && (
-              <p className="mt-1 text-xs text-gray-500">Saving date...</p>
-            )}
-            {collectionDateError && (
-              <p className="mt-1 text-xs text-red-600">{collectionDateError}</p>
-            )}
+              <label className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+                <span>Collection date</span>
+                <input
+                  type="date"
+                  aria-label="Collection date"
+                  value={collectionDate}
+                  onChange={(event) => updateCollectionDate(event.target.value)}
+                  disabled={collectionDateSaving}
+                  className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm font-medium text-gray-900 disabled:opacity-60"
+                />
+              </label>
+              {collectionDateSaving && (
+                <p className="mt-1 text-xs text-gray-500">Saving date...</p>
+              )}
+              {collectionDateError && (
+                <p className="mt-1 text-xs text-red-600">{collectionDateError}</p>
+              )}
+            </div>
           </div>
 
           <button
