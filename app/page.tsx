@@ -104,8 +104,9 @@ function getLocalDateValue(date: Date) {
 }
 
 export default function Home() {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const weightInputRef = useRef<HTMLInputElement>(null);
+  const lastScaleEventRef = useRef("");
 
   const [flocks, setFlocks] = useState<Flock[]>([]);
   const [flockColors, setFlockColors] = useState<Record<string, string[]>>({});
@@ -128,8 +129,12 @@ export default function Home() {
   const [collectionDateSaving, setCollectionDateSaving] = useState(false);
   const [collectionDateError, setCollectionDateError] = useState("");
   const [collectionStarted, setCollectionStarted] = useState(false);
+  const [scaleOwnerId, setScaleOwnerId] = useState("");
+  const [scaleListeningSince, setScaleListeningSince] = useState("");
+  const [scaleStatus, setScaleStatus] = useState("");
 
   const [weight, setWeight] = useState("");
+  const [weightFromScale, setWeightFromScale] = useState(false);
   const [weightNeedsConfirmation, setWeightNeedsConfirmation] = useState(false);
   const [broken, setBroken] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -144,6 +149,66 @@ export default function Home() {
   useEffect(() => {
     loadFlocks();
   }, []);
+
+  useEffect(() => {
+    if (!collectionStarted || collectionFinished || !scaleOwnerId || !scaleListeningSince) {
+      return;
+    }
+
+    let active = true;
+    let requestInProgress = false;
+
+    async function checkForScaleReading() {
+      if (requestInProgress) return;
+      requestInProgress = true;
+
+      const { data, error } = await supabase
+        .from("scale_readings")
+        .select("event_id, weight_grams, created_at")
+        .eq("owner_id", scaleOwnerId)
+        .gte("created_at", scaleListeningSince)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      requestInProgress = false;
+      if (!active) return;
+
+      if (error) {
+        setScaleStatus("Scale connection needs setup. Check the scale setup steps.");
+        return;
+      }
+
+      if (!data) {
+        setScaleStatus("Waiting for a reading from the scale…");
+        return;
+      }
+
+      if (lastScaleEventRef.current === data.event_id) return;
+
+      const roundedWeight = Math.round(Number(data.weight_grams));
+      if (!Number.isFinite(roundedWeight)) return;
+
+      if (weightInputRef.current?.value) {
+        setScaleStatus(`Scale read ${roundedWeight} g. Clear the weight field to use it.`);
+        return;
+      }
+
+      lastScaleEventRef.current = data.event_id;
+      setWeight(String(roundedWeight));
+      setWeightFromScale(true);
+      setWeightNeedsConfirmation(false);
+      setScaleStatus(`Scale reading received: ${roundedWeight} g`);
+    }
+
+    void checkForScaleReading();
+    const intervalId = window.setInterval(() => void checkForScaleReading(), 1200);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [collectionStarted, collectionFinished, scaleOwnerId, scaleListeningSince, supabase]);
 
   async function loadFlocks() {
     const { data, error } = await supabase
@@ -382,6 +447,10 @@ export default function Home() {
 
     setCollectionRoundId(data.id);
     setCollectionTimestamp(data.created_at);
+    setScaleOwnerId(user.id);
+    setScaleListeningSince(data.created_at);
+    lastScaleEventRef.current = "";
+    setScaleStatus("Waiting for a reading from the scale…");
     setCollectionDate(getLocalDateValue(new Date(data.created_at)));
     setCollectionDateError("");
     setCollectionStarted(true);
@@ -424,7 +493,7 @@ export default function Home() {
   }
 
   async function selectFlock(flockId: string) {
-    setWeight("");
+    if (!weightFromScale) setWeight("");
     setWeightNeedsConfirmation(false);
     setBroken(false);
     setMessage("");
@@ -550,9 +619,11 @@ export default function Home() {
     }));
 
     setWeight("");
+    setWeightFromScale(false);
     setWeightNeedsConfirmation(false);
     setBroken(false);
     setSaving(false);
+    setScaleStatus("Remove the egg and wait for the scale to re-arm.");
 
     focusWeight();
   }
@@ -716,9 +787,13 @@ export default function Home() {
     setCollectionDate("");
     setCollectionTimestamp("");
     setCollectionStarted(false);
+    setScaleOwnerId("");
+    setScaleListeningSince("");
+    setScaleStatus("");
     setCollectionFinished(false);
     setShowFinishConfirmation(false);
     setWeight("");
+    setWeightFromScale(false);
     setWeightNeedsConfirmation(false);
     setBroken(false);
 
@@ -1219,6 +1294,7 @@ export default function Home() {
                     value={weight}
                     onChange={(e) => {
                       setWeight(e.target.value);
+                      setWeightFromScale(false);
                       setWeightNeedsConfirmation(false);
                     }}
                     onKeyDown={(e) => {
@@ -1260,6 +1336,10 @@ export default function Home() {
                     ? "Confirm Weight & Save / Next"
                     : "Save Egg & Next"}
               </button>
+
+              <p className="mt-2 text-center text-sm text-gray-700" role="status" aria-live="polite">
+                {scaleStatus}
+              </p>
 
               {weightNeedsConfirmation && (
                 <p className="mt-2 text-center text-sm font-semibold text-amber-800" role="alert">

@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# private scale Wi-Fi/API credentials
+/firmware/egg_scale/secrets.h
+
 # locally generated data review sheets
 /local-review-data/
 

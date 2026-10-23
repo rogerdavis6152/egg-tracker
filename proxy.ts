@@ -2,6 +2,12 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  // The scale has no browser session. Its endpoint authenticates requests
+  // with a device token in app/api/scale/reading/route.ts.
+  if (request.nextUrl.pathname === "/api/scale/reading") {
+    return NextResponse.next();
+  }
+
   let response = NextResponse.next({
     request,
   });
